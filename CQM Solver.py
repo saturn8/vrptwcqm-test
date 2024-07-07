@@ -2,32 +2,39 @@ import os
 import dimod
 import numpy as np
 import pandas as pd
-from dwave.system import LeapHybridCQMSampler
 import networkx as nx
 import matplotlib.pyplot as plt
+from dwave.system import LeapHybridCQMSampler
+
 
 # Set API token
 api_token = os.getenv('DWAVE_API_TOKEN')
 if not api_token:
-    raise ValueError("API token not valid. Please set DWAVE_API_TOKEN environment variable.")
+    raise ValueError("API token not defined. Set DWAVE_API_TOKEN environment variable.")
+print(f"Using API token: {api_token}")
 
 # Load data from files
 customers_df = pd.read_csv('Input/customers.csv')
 vehicles_df = pd.read_csv('Input/vehicles.csv')
 distances_df = pd.read_csv('Input/distances.csv', index_col=0)
 
-# Define problem parameters from datasets
-num_customers = len(customers_df)
+# VRPTW problem parameters from datasets
+num_customers = len(customers_df)  # including depot
 num_vehicles = len(vehicles_df)
 time_windows = list(zip(customers_df['start_time'], customers_df['end_time']))
 service_times = list(customers_df['service_time'])
 distances = distances_df.to_numpy()
 
+# Ensure distances array matches required dimensions
+if distances.shape != (num_customers, num_customers):
+    raise ValueError(f"Distance matrix shape {distances.shape} does not match number of customers plus depot {num_customers}")
+print(f"Shape of distances array: {distances.shape}")
+
 # Variables: x[i][j][k] = 1 if vehicle k travels from i to j
 x = {}
 for k in range(num_vehicles):
-    for i in range(num_customers + 1):
-        for j in range(num_customers + 1):
+    for i in range(num_customers):
+        for j in range(num_customers):
             if i != j:
                 x[i, j, k] = dimod.Binary(f'x_{i}_{j}_{k}')
 
@@ -37,38 +44,37 @@ cqm = dimod.ConstrainedQuadraticModel()
 # Objective: Minimize total distance
 objective = dimod.BinaryQuadraticModel(dimod.BINARY)
 for k in range(num_vehicles):
-    for i in range(num_customers + 1):
-        for j in range(num_customers + 1):
+    for i in range(num_customers):
+        for j in range(num_customers):
             if i != j:
                 objective.set_linear(f'x_{i}_{j}_{k}', distances[i, j])
 
 cqm.set_objective(objective)
 
-# Constraints: Each customer is visited exactly once
-for j in range(1, num_customers + 1):
+# Constraint: Each customer is visited exactly once
+for j in range(1, num_customers):
     cqm.add_constraint(
-        sum(x[i, j, k] for k in range(num_vehicles) for i in range(num_customers + 1) if i != j) == 1,
+        sum(x[i, j, k] for k in range(num_vehicles) for i in range(num_customers) if i != j) == 1,
         label=f'visit_{j}'
     )
 
-# Constraints: Time window
+# Constraint: Time windows
 arrival_times = {}
-for i in range(num_customers + 1):
+for i in range(num_customers):
     if i < len(time_windows):
         arrival_times[i] = dimod.Real(f't_{i}', lower_bound=time_windows[i][0], upper_bound=time_windows[i][1])
     else:
         print(f"Warning: Customer index {i} is out of range for time_windows.")
 
 for k in range(num_vehicles):
-    for i in range(num_customers + 1):
-        for j in range(num_customers + 1):
+    for i in range(num_customers):
+        for j in range(num_customers):
             if i != j and i in arrival_times and j in arrival_times:
-                # Ensure arrival_times[i] and arrival_times[j] are used
-                if i in service_times and j in service_times:
-                    cqm.add_constraint(
-                        arrival_times[j] - arrival_times[i] >= service_times[i] + distances[i, j] - (1 - x[i, j, k]) * 1000,
-                        label=f'time_window_{i}_{j}_{k}'
-                    )
+                service_plus_distance = service_times[i] + distances[i, j]
+                # Formulate constraint to be added to CQM
+                time_constraint = arrival_times[j] - arrival_times[i] - service_plus_distance + 1000 * x[i, j, k]
+                # Add constraint
+                cqm.add_constraint(time_constraint >= 0, label=f'time_window_{i}_{j}_{k}')
 
 # Solve CQM problem
 sampler = LeapHybridCQMSampler()
@@ -79,8 +85,8 @@ solution = sampleset.first.sample
 routes = []
 for k in range(num_vehicles):
     route = []
-    for i in range(num_customers + 1):
-        for j in range(num_customers + 1):
+    for i in range(num_customers):
+        for j in range(num_customers):
             if i != j and solution[f'x_{i}_{j}_{k}'] > 0.5:
                 route.append((i, j))
     routes.append(route)
@@ -96,4 +102,4 @@ for k, route in enumerate(routes):
     plt.savefig(f"output/vehicle_{k + 1}_route.png")
     plt.clf()
 
-print("Routes are saved to 'output' folder.")
+print("Routes is saved to 'output' folder.")
