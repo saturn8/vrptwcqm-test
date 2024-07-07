@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 from dwave.system import LeapHybridCQMSampler
 
 
-# Set API token
 api_token = os.getenv('DWAVE_API_TOKEN')
 if not api_token:
     raise ValueError("API token not defined. Set DWAVE_API_TOKEN environment variable.")
