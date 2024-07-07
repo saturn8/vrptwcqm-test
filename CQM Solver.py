@@ -11,12 +11,12 @@ customers_df = pd.read_csv('input/customers.csv')
 vehicles_df = pd.read_csv('input/vehicles.csv')
 distances_df = pd.read_csv('input/distances.csv')
 
-# Define the VRPTW problem parameters from datasets
-num_customers = len(customers_df)  # Number of customers
-num_vehicles = len(vehicles_df)  # Number of vehicles
-time_windows = list(zip(customers_df['start_time'], customers_df['end_time']))  # Time windows for each customer
-service_times = list(customers_df['service_time'])  # Service times for each customer
-distances = distances_df.to_numpy()  # Distance matrix including depot
+# Define VRPTW problem parameters from datasets
+num_customers = len(customers_df)  
+num_vehicles = len(vehicles_df)  
+time_windows = list(zip(customers_df['start_time'], customers_df['end_time']))  
+service_times = list(customers_df['service_time'])  
+distances = distances_df.to_numpy()  
 
 # Variables: x[i][j][k] = 1 if vehicle k travels from i to j
 x = {}
@@ -26,7 +26,7 @@ for k in range(num_vehicles):
             if i != j:
                 x[i, j, k] = dimod.Binary(f'x_{i}_{j}_{k}')
 
-# Create the CQM
+# Create CQM
 cqm = dimod.ConstrainedQuadraticModel()
 
 # Objective: Minimize total distance
@@ -57,12 +57,12 @@ for k in range(num_vehicles):
                     label=f'time_window_{i}_{j}_{k}'
                 )
 
-# Solve the CQM problem using D-Wave's hybrid solver
+# Solve CQM problem using D-Wave's hybrid solver
 sampler = LeapHybridCQMSampler()
 sampleset = sampler.sample_cqm(cqm)
 solution = sampleset.first.sample
 
-# Extract the solution
+# Extract solution
 routes = []
 for k in range(num_vehicles):
     route = []
@@ -72,7 +72,7 @@ for k in range(num_vehicles):
                 route.append((i, j))
     routes.append(route)
 
-# Output the routes as graphs
+# Output routes as graphs
 for k, route in enumerate(routes):
     G = nx.DiGraph()
     G.add_edges_from(route)
@@ -83,5 +83,5 @@ for k, route in enumerate(routes):
     plt.savefig(f"output/vehicle_{k + 1}_route.png")
     plt.clf()
 
-print("Routes have been saved to the 'output' folder.")
+print("Routes have been saved to'output' folder.")
 ```
