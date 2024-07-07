@@ -14,20 +14,21 @@ if not api_token:
 print(f"Using API token: {api_token}")
 
 # Load data from files
+distances_df = pd.read_csv('Input/distances.csv', index_col=0)
 customers_df = pd.read_csv('Input/customers.csv')
 vehicles_df = pd.read_csv('Input/vehicles.csv')
-distances_df = pd.read_csv('Input/distances.csv', index_col=0)
 
-# VRPTW problem parameters from datasets
-num_customers = len(customers_df) 
+
+# Define problem parameters from datasets
+num_customers = len(customers_df)  
 num_vehicles = len(vehicles_df)
 time_windows = list(zip(customers_df['start_time'], customers_df['end_time']))
 service_times = list(customers_df['service_time'])
 distances = distances_df.to_numpy()
 
-# Ensure distances array matches required dimensions
+# Distances array match required dimensions
 if distances.shape != (num_customers, num_customers):
-    raise ValueError(f"Distance matrix shape {distances.shape} does not match number of customers plus depot {num_customers}")
+    raise ValueError(f"Distance matrix shape {distances.shape} does not match no of customers and depot {num_customers}")
 print(f"Shape of distances array: {distances.shape}")
 
 # Variables: x[i][j][k] = 1 if vehicle k travels from i to j
@@ -51,14 +52,14 @@ for k in range(num_vehicles):
 
 cqm.set_objective(objective)
 
-# Constraint: Each customer is visited exactly once
+# Constraints: Each customer is visited exactly once
 for j in range(1, num_customers):
     cqm.add_constraint(
         sum(x[i, j, k] for k in range(num_vehicles) for i in range(num_customers) if i != j) == 1,
         label=f'visit_{j}'
     )
 
-# Constraint: Time windows
+# Constraints: Time window
 arrival_times = {}
 for i in range(num_customers):
     if i < len(time_windows):
@@ -71,17 +72,15 @@ for k in range(num_vehicles):
         for j in range(num_customers):
             if i != j and i in arrival_times and j in arrival_times:
                 service_plus_distance = service_times[i] + distances[i, j]
-                # Formulate constraint to be added to CQM
                 time_constraint = arrival_times[j] - arrival_times[i] - service_plus_distance + 1000 * x[i, j, k]
-                # Add constraint
                 cqm.add_constraint(time_constraint >= 0, label=f'time_window_{i}_{j}_{k}')
 
-# Solve CQM problem
+# Solve CQM
 sampler = LeapHybridCQMSampler()
 sampleset = sampler.sample_cqm(cqm)
 solution = sampleset.first.sample
 
-# Extract solution
+# Solution
 routes = []
 for k in range(num_vehicles):
     route = []
@@ -91,7 +90,7 @@ for k in range(num_vehicles):
                 route.append((i, j))
     routes.append(route)
 
-# Output routes as graphs
+# Generate graphs
 for k, route in enumerate(routes):
     G = nx.DiGraph()
     G.add_edges_from(route)
@@ -102,4 +101,4 @@ for k, route in enumerate(routes):
     plt.savefig(f"output/vehicle_{k + 1}_route.png")
     plt.clf()
 
-print("Routes is saved to 'output' folder.")
+print("Routes are saved in 'output' folder.")
