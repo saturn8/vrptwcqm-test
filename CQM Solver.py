@@ -19,7 +19,7 @@ vehicles_df = pd.read_csv('Input/vehicles.csv')
 distances_df = pd.read_csv('Input/distances.csv', index_col=0)
 
 # VRPTW problem parameters from datasets
-num_customers = len(customers_df)  # including depot
+num_customers = len(customers_df) 
 num_vehicles = len(vehicles_df)
 time_windows = list(zip(customers_df['start_time'], customers_df['end_time']))
 service_times = list(customers_df['service_time'])
