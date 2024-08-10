@@ -1,0 +1,139 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from dimod import ConstrainedQuadraticModel, Binary, quicksum
+from dwave.system import LeapHybridCQMSampler
+
+# Load the input data
+customers = pd.DataFrame({
+    'demand': [10, 20, 15],
+    'service_time': [15, 10, 20],
+    'start_time': [0, 30, 60],
+    'end_time': [120, 150, 200],
+    'x': [5, 15, 30],
+    'y': [10, 25, 40]
+})
+distance_matrix = pd.DataFrame([
+    [0, 10, 20],
+    [10, 0, 15],
+    [20, 15, 0]
+])
+vehicles = pd.DataFrame({
+    'capacity': [30, 40]
+})
+
+# Ensure the distance matrix is square
+if distance_matrix.shape[0] != distance_matrix.shape[1]:
+    raise ValueError("The distance matrix is not square")
+
+num_customers = len(customers)
+num_vehicles = len(vehicles)
+depot = 0
+
+# Initialize the CQM model
+cqm = ConstrainedQuadraticModel()
+
+# Decision variables
+x = {}
+for i in range(num_customers + 1):
+    for j in range(num_customers + 1):
+        for k in range(num_vehicles):
+            x[i, j, k] = Binary(f'x_{i}_{j}_{k}')
+
+# Objective function: minimize total travel distance
+cqm.set_objective(
+    quicksum(distance_matrix.iloc[i-1, j-1] * x[i, j, k]
+             for i in range(1, num_customers + 1)
+             for j in range(1, num_customers + 1)
+             for k in range(num_vehicles)
+             if i != j)
+)
+
+# Constraints
+
+# Each customer is visited exactly once
+for j in range(1, num_customers + 1):
+    cqm.add_constraint(
+        quicksum(x[i, j, k] for i in range(num_customers + 1) for k in range(num_vehicles) if i != j) == 1,
+        label=f"visit_customer_{j}"
+    )
+
+# Each vehicle leaves the depot and returns to the depot
+for k in range(num_vehicles):
+    cqm.add_constraint(
+        quicksum(x[depot, j, k] for j in range(1, num_customers + 1)) == 1,
+        label=f"leave_depot_{k}"
+    )
+    cqm.add_constraint(
+        quicksum(x[i, depot, k] for i in range(1, num_customers + 1)) == 1,
+        label=f"return_depot_{k}"
+    )
+
+# Vehicle capacity constraint
+for k in range(num_vehicles):
+    cqm.add_constraint(
+        quicksum(customers['demand'][j - 1] * quicksum(x[i, j, k] for i in range(num_customers + 1) if i != j)
+                 for j in range(1, num_customers + 1)) <= vehicles['capacity'][k],
+        label=f"capacity_vehicle_{k}"
+    )
+
+# Solve the CQM problem using D-Wave's hybrid sampler
+sampler = LeapHybridCQMSampler()
+sampleset = sampler.sample_cqm(cqm, label="CVRPTW")
+feasible_sampleset = sampleset.filter(lambda d: d.is_feasible)
+
+# If feasible solutions are found, extract the best solution
+if len(feasible_sampleset) > 0:
+    solution = feasible_sampleset.first.sample
+    print("Feasible solutions found!")
+else:
+    print("No feasible solution found")
+    exit()
+
+# Extract routes from solution
+routes = {k: [] for k in range(num_vehicles)}
+
+for k in range(num_vehicles):
+    route = [depot]
+    current_node = depot
+    while True:
+        next_node = None
+        for j in range(num_customers + 1):
+            if current_node != j and solution.get(f'x_{current_node}_{j}_{k}', 0):
+                next_node = j
+                break
+        if next_node is None or next_node == depot:
+            break
+        route.append(next_node)
+        current_node = next_node
+    route.append(depot)  # Ensure the route ends at the depot
+    routes[k] = route
+
+# Plot the routes using Matplotlib
+plt.figure(figsize=(10, 6))
+
+# Plot depot
+plt.plot(0, 0, 'ro', markersize=10, label='Depot')
+
+# Plot customers
+for i in range(1, num_customers + 1):
+    plt.plot(customers['x'][i-1], customers['y'][i-1], 'bo', markersize=7)
+    plt.text(customers['x'][i-1] + 0.5, customers['y'][i-1] + 0.5, f'Customer {i}', fontsize=9)
+
+# Plot routes
+colors = ['g', 'b']
+for k, route in routes.items():
+    route_coords = [(0, 0)] + [(customers['x'][i-1], customers['y'][i-1]) for i in route[1:-1]] + [(0, 0)]
+    route_x, route_y = zip(*route_coords)
+    plt.plot(route_x, route_y, colors[k % len(colors)] + '-', linewidth=2, label=f'Vehicle {k+1} Route')
+
+# Add titles and labels
+plt.title('CVRPTW Solution Plot')
+plt.xlabel('X Coordinate')
+plt.ylabel('Y Coordinate')
+plt.legend()
+plt.grid(True)
+
+# Save plot to a file
+plt.savefig('cvrptw_solution_plot.png')
+plt.close()
