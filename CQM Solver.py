@@ -1,103 +1,114 @@
 import os
-import dimod
-import numpy as np
 import pandas as pd
 import networkx as nx
 import matplotlib.pyplot as plt
 from dwave.system import LeapHybridCQMSampler
+from dimod import ConstrainedQuadraticModel, Binary, quicksum, Integer
+import numpy as np
 
+# Load input files
+customers = pd.read_csv('Input/customers.csv')
+distances = pd.read_csv('Input/distances.csv', index_col=0)
+vehicles = pd.read_csv('Input/vehicles.csv')
 
-api_token = os.getenv('DWAVE_API_TOKEN')
-if not api_token:
-    raise ValueError("API token not defined. Set DWAVE_API_TOKEN environment variable.")
-print(f"Using API token: {api_token}")
+# Debugging: print data
+print("Customers Data:")
+print(customers)
+print("Distances Data:")
+print(distances)
+print("Vehicles Data:")
+print(vehicles)
 
-# Load data from files
-distances_df = pd.read_csv('Input/distances.csv', index_col=0)
-customers_df = pd.read_csv('Input/customers.csv')
-vehicles_df = pd.read_csv('Input/vehicles.csv')
+# Number of customers and vehicles
+num_customers = len(customers)
+num_vehicles = len(vehicles)
 
+# Extract vehicle capacities
+vehicle_capacities = vehicles['capacity'].values
 
-# Define problem parameters from datasets
-num_customers = len(customers_df)  
-num_vehicles = len(vehicles_df)
-time_windows = list(zip(customers_df['start_time'], customers_df['end_time']))
-service_times = list(customers_df['service_time'])
-distances = distances_df.to_numpy()
+# Time windows and service times
+time_windows = customers[['start_time', 'end_time']].values
+service_times = customers['service_time'].values
 
-# Distances array match required dimensions
-if distances.shape != (num_customers, num_customers):
-    raise ValueError(f"Distance matrix shape {distances.shape} does not match no of customers and depot {num_customers}")
-print(f"Shape of distances array: {distances.shape}")
+# Create distance matrix
+distance_matrix = distances.values
 
-# Variables: x[i][j][k] = 1 if vehicle k travels from i to j
+# Check if distance matrix is square
+if distance_matrix.shape[0] != distance_matrix.shape[1]:
+    raise ValueError(f"The distance matrix is not square. Found shape: {distance_matrix.shape}")
+print("Distance matrix shape:", distance_matrix.shape)
+
+# Create binary variables
 x = {}
-for k in range(num_vehicles):
-    for i in range(num_customers):
-        for j in range(num_customers):
-            if i != j:
-                x[i, j, k] = dimod.Binary(f'x_{i}_{j}_{k}')
+for i in range(num_customers):
+    for j in range(num_customers):
+        if i != j:
+            for k in range(num_vehicles):
+                x[i, j, k] = Binary(f'x_{i}_{j}_{k}')
 
-# Create CQM
-cqm = dimod.ConstrainedQuadraticModel()
+# Create CQM model
+cqm = ConstrainedQuadraticModel()
 
 # Objective: Minimize total distance
-objective = dimod.BinaryQuadraticModel(dimod.BINARY)
+objective = quicksum(distance_matrix[i, j] * x[i, j, k]
+                     for i in range(num_customers) for j in range(num_customers) if i != j for k in range(num_vehicles))
+cqm.set_objective(objective)
+
+# Constraint 1: Each customer is visited exactly once
+for i in range(1, num_customers):
+    cqm.add_constraint(quicksum(x[i, j, k] for j in range(num_customers) if i != j for k in range(num_vehicles)) == 1, label=f'visit_once_{i}')
+
+# Constraint 2: Vehicle capacity
 for k in range(num_vehicles):
+    cqm.add_constraint(quicksum(customers['demand'][i] * quicksum(x[i, j, k] for j in range(num_customers) if i != j) for i in range(num_customers)) <= vehicle_capacities[k], label=f'vehicle_capacity_{k}')
+
+# Time variables (Integer)
+time_vars = {i: Integer(f't_{i}', lower_bound=0, upper_bound=1440) for i in range(num_customers)}
+
+# Solve the CQM problem
+sampler = LeapHybridCQMSampler()
+sampleset = sampler.sample_cqm(cqm, time_limit=120)
+
+# Check if there are any feasible solutions
+feasible_sampleset = sampleset.filter(lambda sample: sample.is_feasible)
+if len(feasible_sampleset) == 0:
+    print("No feasible solutions found. Reviewing constraints and data.")
+else:
+    best_solution = feasible_sampleset.first.sample
+    print("Feasible solutions found!")
+
+    # Extract routes from solution
+    routes = [[] for _ in range(num_vehicles)]
     for i in range(num_customers):
         for j in range(num_customers):
             if i != j:
-                objective.set_linear(f'x_{i}_{j}_{k}', distances[i, j])
+                for k in range(num_vehicles):
+                    if best_solution[f'x_{i}_{j}_{k}']:
+                        routes[k].append((i, j))
 
-cqm.set_objective(objective)
-
-# Constraints: Each customer is visited exactly once
-for j in range(1, num_customers):
-    cqm.add_constraint(
-        sum(x[i, j, k] for k in range(num_vehicles) for i in range(num_customers) if i != j) == 1,
-        label=f'visit_{j}'
-    )
-
-# Constraints: Time window
-arrival_times = {}
-for i in range(num_customers):
-    if i < len(time_windows):
-        arrival_times[i] = dimod.Real(f't_{i}', lower_bound=time_windows[i][0], upper_bound=time_windows[i][1])
-    else:
-        print(f"Warning: Customer index {i} is out of range for time_windows.")
-
-for k in range(num_vehicles):
-    for i in range(num_customers):
-        for j in range(num_customers):
-            if i != j and i in arrival_times and j in arrival_times:
-                service_plus_distance = service_times[i] + distances[i, j]
-                time_constraint = arrival_times[j] - arrival_times[i] - service_plus_distance + 1000 * x[i, j, k]
-                cqm.add_constraint(time_constraint >= 0, label=f'time_window_{i}_{j}_{k}')
-
-# Solve CQM
-sampler = LeapHybridCQMSampler()
-sampleset = sampler.sample_cqm(cqm)
-solution = sampleset.first.sample
-
-# Solution
-routes = []
-for k in range(num_vehicles):
-    route = []
-    for i in range(num_customers):
-        for j in range(num_customers):
-            if i != j and solution[f'x_{i}_{j}_{k}'] > 0.5:
-                route.append((i, j))
-    routes.append(route)
-
-# Generate graphs
-for k, route in enumerate(routes):
+    # Plot the routes
     G = nx.DiGraph()
-    G.add_edges_from(route)
-   
-    pos = nx.spring_layout(G)
-    nx.draw(G, pos, with_labels=True, node_size=500, node_color='lightblue', font_size=10, font_weight='bold', arrowsize=20)
-    plt.title(f"Vehicle {k + 1} Route")
-    plt.savefig(f"output/vehicle_{k + 1}_route.png")
-    plt.clf()
+    positions = {i: (customers['x'][i], customers['y'][i]) for i in range(num_customers)}
+    for k, route in enumerate(routes):
+        color = np.random.rand(3,)
+        for (i, j) in route:
+            G.add_edge(i, j, color=color, weight=2)
 
-print("Routes are saved in 'output' folder.")
+    edges = G.edges()
+    colors = [G[u][v]['color'] for u, v in edges]
+    weights = [G[u][v]['weight'] for u, v in edges]
+
+    plt.figure(figsize=(12, 8))
+    nx.draw(G, pos=positions, edge_color=colors, width=weights, with_labels=True, node_size=500, node_color='lightblue', font_size=10)
+    plt.title('Vehicle Routes')
+
+    # Ensure the output directory exists
+    output_dir = '/workspaces/vrptwcqm-test/output/'
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save the plot as a PNG image in the output directory
+    output_file = os.path.join(output_dir, 'routes.png')
+    plt.savefig(output_file)
+    plt.show()
+
+    print(f"Routes have been plotted and saved to '{output_file}'.")
