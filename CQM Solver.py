@@ -43,15 +43,14 @@ objective = quicksum(distances[i, j] * x[i, j, k]
                      if i != j)
 cqm.set_objective(objective)
 
-# Constraints
-# 1. Each customer is visited exactly once
+# C1. Each customer is visited exactly once
 for j in range(1, num_customers):  # Adjusting the loop to account for the depot at index 0
     cqm.add_constraint(
         quicksum(x[i, j, k] for i in range(num_customers) for k in range(num_vehicles) if i != j) == 1,
         label=f"visit_customer_{j}"
     )
 
-# 2. Each vehicle leaves the depot and returns to the depot
+# C2. Each vehicle leaves the depot and returns to the depot
 for k in range(num_vehicles):
     cqm.add_constraint(
         quicksum(x[0, j, k] for j in range(1, num_customers)) == 1,
@@ -62,7 +61,7 @@ for k in range(num_vehicles):
         label=f"return_depot_{k+1}"
     )
 
-# 3. Vehicle capacity constraint
+# C3. capacity constraint
 for k in range(num_vehicles):
     cqm.add_constraint(
         quicksum(customers_df['demand'][j-1] * quicksum(x[i, j, k] for i in range(num_customers) if i != j)
@@ -70,7 +69,7 @@ for k in range(num_vehicles):
         label=f"capacity_vehicle_{k+1}"
     )
 
-# 4. Subtour elimination constraints
+# C4. elimination constraints
 u = {i: Binary(f'u_{i}') for i in range(1, num_customers)}
 
 for k in range(num_vehicles):
@@ -80,7 +79,7 @@ for k in range(num_vehicles):
                 cqm.add_constraint(u[i] - u[j] + (num_customers - 1) * x[i, j, k] <= num_customers - 2,
                                    label=f"subtour_elimination_{i}_{j}_{k}")
 
-# Solve the CQM 
+# Solve CQM 
 sampler = LeapHybridCQMSampler()
 sampleset = sampler.sample_cqm(cqm, label="CVRPTW")
 feasible_sampleset = sampleset.filter(lambda d: d.is_feasible)
@@ -112,7 +111,7 @@ for k in range(num_vehicles):
         current_node = next_node
     routes[k].append(0) 
 
-# Ensure all customers are visited by at least one vehicle
+# at least one vehicle visits all customers 
 all_visited = set()
 for k in range(num_vehicles):
     all_visited.update(routes[k])
@@ -127,7 +126,7 @@ if missing_customers:
 else:
     print("All customers are covered!")
 
-# Plotting and Visualization
+# Plotting
 plt.figure(figsize=(10, 6))
 plt.plot(0, 0, 'ro', markersize=10, label='Depot')
 
@@ -151,7 +150,7 @@ for k, route in routes.items():
         plt.text(x_mid, y_mid, f'{distance}', fontsize=8, color='black')
 
 
-plt.title('CVRPTW Solution Plot')
+plt.title('CVRPTW Solution')
 plt.legend()
 
 # Save solution
