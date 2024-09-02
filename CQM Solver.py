@@ -8,7 +8,7 @@ from dimod import ConstrainedQuadraticModel, Binary, quicksum
 
 
 # Fetch input data
-distances_df = pd.read_csv('Input/distances.csv', index_col=0)
+distances_df = pd.read_csv('Input/travel_times.csv', index_col=0)
 customers_df = pd.read_csv('Input/customers.csv')
 vehicles_df = pd.read_csv('Input/vehicles.csv')
 
