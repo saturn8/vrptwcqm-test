@@ -1,4 +1,3 @@
-capacity
-40
-50
-
+vehicle_id,capacity
+1,25
+2,30
